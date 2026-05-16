@@ -1,0 +1,139 @@
+Contig abundance to AMG heatmap commands
+
+-------
+
+#Set working directory
+setwd("C:/Users/alish/OneDrive/Documents/Grad school Micro/final semester/bioinformatic class/virome/virome_project_Spreadsheet/")
+
+#Install the packages
+install.packages(c("tidyverse", "pheatmap"))
+
+#load the necessary libraries
+library(tidyverse)
+library(pheatmap)
+
+#load the spreadsheets/data
+amg <- read.table("amg_summary.txt", sep = "\t", header = TRUE)
+abundance <- read_csv("checkm_abundance.csv")
+
+#fix column names or make column names diverse
+abundance <- abundance %>%
+  rename(gene = `Viral contig Id`)
+
+#join datasheets
+df <- left_join(amg, abundance, by = "gene", relationship = "many-to-many")
+
+#keep only real amgs
+df <- df %>%
+  filter(potential_amg == TRUE)
+
+#create amg labels and make it unique/shorter
+df <- df %>%
+  mutate(short_desc = sub(";.*", "", gene_description))
+
+df <- df %>%
+  mutate(AMG_label = paste(gene_id, short_desc, gene, sep = " | "))
+
+df$AMG_label <- make.unique(df$AMG_label)
+
+#build the heatmap with pheatmap
+heatmap_data <- df %>%
+  select(AMG_label, matches("spp|Control|Pea|Radish|Rye")) %>%
+  column_to_rownames("AMG_label")
+
+heatmap_data <- t(heatmap_data)
+
+heatmap_data[is.na(heatmap_data)] <- 0
+heatmap_data <- log10(heatmap_data + 1)
+
+pheatmap(
+  heatmap_data,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  fontsize_row = 8,
+  fontsize_col = 6,
+  main = "AMG abundance across samples"
+)
+
+#save the table as a tsv
+write.table(
+  heatmap_data,
+  file = "amg_heatmap.tsv",
+  sep = "\t",
+  quote = FALSE
+)
+
+
+####### plot with ggplot
+#setwd
+setwd("C:/Users/alish/OneDrive/Documents/Grad school Micro/final semester/bioinformatic class/virome/virome_project_Spreadsheet/")
+
+#load and install packages
+install.packages("tidyverse")
+
+library(tidyverse)
+
+#load data
+amg <- read.table("amg_summary.txt", sep = "\t", header = TRUE)
+abundance <- read_csv("checkm_abundance.csv")
+
+#fix column names
+abundance <- abundance %>%
+  rename(gene = `Viral contig Id`)
+
+#Merge datasets
+df <- left_join(amg, abundance, by = "gene", relationship = "many-to-many")
+
+#keep real amgs
+df <- df %>%
+  filter(potential_amg == TRUE)
+
+#clean the gene description and create unique amg labels
+df <- df %>%
+  mutate(short_desc = sub(";.*", "", gene_description))
+
+df <- df %>%
+  mutate(AMG_label = paste(gene_id, short_desc, gene, sep = " | "))
+
+df$AMG_label <- make.unique(df$AMG_label)
+
+#build heatmap matrix
+heatmap_data <- df %>%
+  select(AMG_label, matches("spp|Control|Pea|Radish|Rye")) %>%
+  column_to_rownames("AMG_label")
+
+# transpose → samples on Y-axis
+heatmap_data <- t(heatmap_data)
+
+# replace NA + log transform
+heatmap_data[is.na(heatmap_data)] <- 0
+heatmap_data <- log10(heatmap_data + 1)
+
+#convert data to long format
+heatmap_long <- as.data.frame(heatmap_data) %>%
+  rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "AMG", values_to = "Abundance")
+
+#plot heatmap
+ggplot(heatmap_long, aes(x = AMG, y = Sample, fill = Abundance)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "magma") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+    axis.text.y = element_text(size = 8)
+  ) +
+  labs(
+    title = "AMG abundance across samples",
+    x = "AMGs",
+    y = "Samples",
+    fill = "log10(abundance + 1)"
+  )
+
+#save matrix as tsv
+write.table(
+  heatmap_data,
+  file = "amg_heatmap.tsv",
+  sep = "\t",
+  quote = FALSE
+)
