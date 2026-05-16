@@ -1,0 +1,88 @@
+#Virome analysis pipeline 
+
+#SUMMARY
+
+Analyses the metagenome assembled genomes for identification of viral sequences using Virsorter and VITAP, which looks for groups such as dsDNAphage,ssDNA,RNA, and other viral IDs. The viral FASTA files produced by Virsorter2 and VITAP was concatenated into one file and the viral contigs was clustered into viral operational taxonomic units (vOTUs) using CD-Hit.  The combine file with the viral contig clusters was checked for quality using CheckV. CheckV assesses the combined .fa file for genome completeness, contamination, and assigns quality categories (complete, high, medium, or low quality). The quality_summary.tsv file from CHECKv was filtered to jeep the medium-quality and above scores to result in a medium_plus_filtered_votu.fa file that ahs all the good quality clustered viral contigs. 
+
+
+### Vir-sorter
+module load anaconda3/2023.09-0
+#activate virsorter
+conda activate /project/bcampb7/camplab/MICRO_8130_2026/project/tools/virsorter2_env
+
+#run virsorter 
+virsorter run \
+  -i /project/bcampb7/camplab/MICRO_8130_2026/project/working_dir/Control_23_R1_S13.fa \
+  -w /project/bcampb7/camplab/MICRO_8130_2026/project/working_dir/virsorter_output \
+  --db-dir /project/bcampb7/camplab/MICRO_8130_2026/project/tools/virsorter2_db \
+  --min-length 1500 \
+  --include-groups "dsDNAphage,ssDNA,RNA,NCLDV,lavidaviridae" \
+  -j 16 \
+  all
+
+## VITAP
+#activate VITAP 
+conda activate /project/bcampb7/camplab/MICRO_8130_2026/project/tools/VITAP_env
+module load diamond/2.0.14
+which diamond
+diamond version
+
+#run VITAP
+VITAP assignment \
+-i /project/bcampb7/camplab/MICRO_8130_2026/coassemblies/DNA_assembly.fa \
+-d /project/bcampb7/camplab/MICRO_8130_2026/project/tools/VITAP_db \
+-o /project/bcampb7/camplab/MICRO_8130_2026/coassemblies/vitap_output_coaseembly
+
+#concatenate .fa files from virsorter2 and vitap
+cat virsorter_output/final-viral-combined.fa \
+    vitap_output/viral_sequences.fasta \
+    > viral_contigs_combined.fasta
+
+
+### CD-Hit
+module load cd-hit/4.8.1
+
+cd-hit-est \
+-i viral_contigs_combined.fasta \
+-o vOTUs.fasta \
+-c 0.95 \
+-aS 0.85 \
+-T 20 \
+-M 0
+
+###Checkv quality assesstment
+#Installation|
+
+# Load conda
+module load anaconda3/2023.09-0
+
+# Create environment for using CheckV
+conda create -n checkv_env -c bioconda checkv -y
+
+# Download CheckV database
+checkv download_database ./
+export CHECKVDB=</path/to/database>
+
+#loading
+# Load conda
+module load anaconda3/2023.09-0
+
+# Activate conda environment
+source activate checkv_env
+
+#Running
+checkv end_to_end \
+transcript_cdhit.fasta \
+/scratch/apaul3/micro_8130/checkv_output_2 \
+-d /project/bcampb7/camplab/MICRO_8130_2026/project/db/checkv_db/checkv-db-v1.5 \
+-t 16 
+
+
+#### Use quality_summary.tsv file from CHECKV to filter medium plus quality and above contigs 
+
+#step 3: keep medium-quality and above
+awk -F'\t' 'NR>1 && ($8=="Medium-quality" || $8=="High-quality" || $8=="Complete") {print $1}' (add path)/checkv_out_filter/quality_summary.tsv > medium_plus_ids.txt
+
+#step 4: subset fasta for CD-HIT input #use transcript.fasta file as the substitute for the combined_viral_contigs.fa 
+module load seqkit/2.10.0
+seqkit grep -f medium_plus_ids.txt combined_viral_contigs_min3.5kb.fa > combined_viral_contigs_min_mediumplus.fa

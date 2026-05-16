@@ -1,0 +1,219 @@
+#This pipeline is how the metagenomes were quality assessed, trimmed, assembled, binned, and analyzed. This is not for the virome analyses. 
+
+#SUMMARY of pipeline
+After sequencing metagenomes from a sequencing platform such as illumina, the metagenome reads was assessed for good quality via FastQC (0.12.1) and trimmed using trimmomatic (0.39). Unwanted sequencing information such as adapters was removed using trimmomatic and host DNA was removed via kneaddata, which is specifically used for metagenome data. Pair end reads were specified in the trimmomatic script to trim both forward and reverse reads. The metagenomes were assembled using MetaSPAdes (4.0.0) and quality assessed with MetaQuast (5.0.2), genome binning and refinement with metaWrap. Bin quality was assessed with Checkm2 (1.0.1) and genomes were dereplicated using dREP (3.5.0). Metagenomes were analyzed for taxonomy using gtdbtk, genome annotations such as proteins present using prokka (1.14.5), and metabolic capabilities using DRAM (1.4.6). 
+
+### FastQC 
+gives a quick quality snapshot of sequencing data and MultiQC combines the results if you have many samples. 
+
+**Running on palmetto** #SUCCESSFUL 2-20-26
+```bash
+module avail fastqc
+module load fastqc/0.12.1
+cd /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data
+mkdir -p fastqc_results #FastQC will NOT create the output directory automatically.
+fastqc -o fastqc_results/ -f fastq /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/*.fastq.gz
+
+
+### Adapter Trimming (Trimmomatic)
+
+Why trim?
+■ Remove adapters
+■ Remove low-quality bases
+■ Remove short reads
+
+```bash
+module avail trimmomatic
+module load trimmomatic/0.39
+java -jar $trimmomatic -h #Palmetto the module does not put trimmomatic-0.39.jar in your current folder. Instead, it sets an environment variable pointing to the jar so change the calling in default settings;java -jar $trimmomatic -h 
+cd /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data #no need to change
+mkdir -p trimming_results
+#on Palmetto2. please use
+java -jar "$trimmomatic" PE \
+  -threads 8 \
+  -phred33 \
+  ABF4_143_1.fastq \
+  ABF4_143_2.fastq \
+  ABF4_143_1_paired.fastq.gz \
+  ABF4_143_1_unpaired.fastq.gz \
+  ABF4_143_2_paired.fastq.gz \
+  ABF4_143_2_unpaired.fastq.gz \
+  ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True \
+  LEADING:3 \
+  TRAILING:3 \
+  SLIDINGWINDOW:4:15 \
+  MINLEN:36 \
+  2> ABF4_143_trimmomatic.log
+
+**What if you have many samples?**
+
+Use sbatch trimmomatic_batch.slurm from /scripts
+
+● How to run
+```bash
+cd /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data
+nano trimmomatic_batch.slurm   # paste script, set YOUR_EMAIL
+sbatch trimmomatic_batch.slurm
+
+
+#### Host removal 
+**Metagenomic samples often contain host DNA (human, mouse, plant, etc.) that needs to be removed before analysis**
+
+● KneadData 
+KneadData is specifically designed for metagenomic data and integrates multiple tools.
+
+```bash
+mkdir -p decontaminated
+mkdir -p logs/kneaddata
+
+# Single sample
+kneaddata \
+    --input trimmed/sample1_R1_paired.fastq.gz \
+    --input trimmed/sample1_R2_paired.fastq.gz \
+    --output decontaminated/sample1 \
+    --reference-db /path/to/databases/kneaddata_db/human_genome \
+    --threads 16 \
+    --trimmomatic /path/to/trimmomatic \
+    --bypass-trim \
+    --log logs/kneaddata/sample1.log
+
+# Options:
+# --bypass-trim : Skip trimming (already done with Trimmomatic)
+# --reference-db : Path to host genome database
+# --threads : Number of threads
+
+
+**metaSPAdes Assembly**
+metaSPAdes is part of the SPAdes assembler family, specifically designed for metagenomic data.
+
+```bash #SUCCESSFUL 2-20-26
+module avail spades
+module load spades/4.0.0
+# Single sample, paired-end
+metaspades.py \
+    -1 /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/ABF4_143_1_paired.fastq.gz \
+    -2 /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/ABF4_143_2_paired.fastq.gz \
+    -o metaspades_output \
+    -t 32 \
+    -m 200
+
+#### Assembly Quality Assessment
+MetaQUAST: The Standard for Assembly Evaluation
+MetaQUAST (Quality Assessment Tool for Metagenome Assemblies) provides comprehensive quality metrics.
+
+Basic usage
+# Single assembly
+```bash
+module avail quast
+module load quast/5.0.2
+metaquast.py \
+  /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/metaspades_output/contigs.fasta \
+  -o metaquast_output \
+  -t 32 \
+  --max-ref-number 0
+
+
+#### Genome Binning - Recovering Individual Genomes (MAGs)_
+module purge
+module load anaconda3/2023.09-0
+
+/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/tools/run_metawrap.sh --help
+TOOLS=/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/tools
+$TOOLS/run_metawrap.sh --help
+
+gunzip -k /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/for_binning/ABF4-143_1.fastq.gz
+gunzip -k /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/for_binning/ABF4-143_2.fastq.gz
+
+/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/tools/run_metawrap.sh binning \
+  -o /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/INITIAL_BINNING-amp \
+  -t 32 \
+  -m 200 \
+  -a /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/metaspades_output/contigs.fasta \
+  --metabat2 \
+  --maxbin2 \
+  /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/for_binning/ABF4-143_1.fastq \
+  /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/raw_data/trimming_results/for_binning/ABF4-143_2.fastq
+
+#### Bin Refinement
+module load checkm2/1.0.1
+export CHECKM_DATA_PATH=/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/MY_CHECKM_FOLDER
+/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/tools/run_metawrap.sh bin_refinement \
+-o /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/BIN_REFINEMENT_amp_1 \
+-t 32 \
+-m 200 \
+-A /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/INITIAL_BINNING_amp/metabat2_bins \
+-B /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/INITIAL_BINNING_amp/maxbin2_bins \
+-c 50 -x 10
+
+#### Bin Quality Assessment
+checkm lineage_wf \
+    -t 16 \
+    -x fa \
+    BIN_REFINEMENT/metawrap_50_10_bins/ \
+    checkm_output/
+
+#### Genome Dereplication #SUCCESSFUL 2-20-26
+module avail drep
+module load drep/3.5.0
+export CHECKM_DATA_PATH=/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/MY_CHECKM_FOLDER
+
+# Strain-level dereplication (99% ANI) #SUCCESSFUL 2-20-26
+dRep dereplicate \
+/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp_redo/ \
+-g /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/BIN_REFINEMENT_amp_1/metawrap_50_10_bins/*.fa
+
+#### Taxonomy
+conda activate /project/bcampb7/camplab/Jojy/MTM2_RoL/gtdbtk_may24
+
+#gene calling(identify) #SUCCESSFUL 2-20-26
+gtdbtk identify --genome_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes --out_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1 --extension fa --cpus 32
+
+#Allighn genomespr #SUCCESSFUL 2-20-26
+gtdbtk align --identify_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1/ --out_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1/align --cpus 32 
+
+#Classyfy the genome #SUCCESSFUL 2-20-26
+gtdbtk classify --genome_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes  --align_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1/align  --out_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1/classify -x fa --cpus 32 --mash_db /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp_1
+
+#Denovo_workflow #SUCESSFUL 2-21-26
+gtdbtk de_novo_wf --genome_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes  --out_dir /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp/de_novo --extension fa --bacteria  --cpus 32 --outgroup_taxon p__Chloroflexota --skip_gtdb_refs --custom_taxonomy_file path/custom_taxonomy_file.tsv 
+
+#use itol to visualize taxonomy 
+gtdbtk convert_to_itol --input_tree  /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp/de_novo/infer/intermediate_results/gtdbtk.bac120.unrooted.tree --output_tree /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/Gtdbtk_amp/de_novo/OUTPUT_TREE (this is optional, if you want to anotate the tree on iToL use this or skip)
+
+##### Genome annotations
+module avail prokka
+module load prokka/1.14.5
+mkdir -p prokka_out
+
+for g in *.fa 2>/dev/null; do
+  [ -e "$g" ] || continue
+  sample=$(basename "$g")
+  sample=${sample%.*}
+
+  prokka \
+    --outdir "prokka_out/${sample}" \
+    --prefix "${sample}" \
+    --cpus 8 \
+    --kingdom Bacteria \
+    "$g"
+done
+
+
+####DRAM annotation
+module avail dram
+module load dram/1.4.6
+source /project/cugbf/software/gbf/DRAM/1.4.6.sh
+
+# Annotate MAGs #successful 2.24.26
+DRAM.py annotate \
+    -i '/project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes/*.fa' \
+    -o dram_output
+
+# Distill annotations into metabolic summary
+DRAM.py distill \
+    -i /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes/dram_output/annotations.tsv \
+    -o /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes/dram_distillate \
+    --trna_path /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes/dram_output/trnas.tsv \
+    --rrna_path /project/bcampb7/camplab/MICRO_8130_2026/metagenome_jojy/metawrap/drep_amp/dereplicated_genomes/dram_output/rrnas.tsv
+
+
